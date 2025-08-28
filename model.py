@@ -4,10 +4,8 @@ from dataclasses import dataclass, field
 from typing import Optional
 import numpy as np
 
-Vector2 = np.ndarray  # shape (2,)
 
-
-def as_vec2(x: tuple[float, float] | list[float] | np.ndarray) -> Vector2:
+def as_vec2(x: tuple[float, float] | list[float] | np.ndarray) -> np.ndarray:
     """Convert input to a (2,) float64 numpy array (no copy if already suitable)."""
     a = np.asarray(x, dtype=float)
     if a.shape != (2,):
@@ -15,26 +13,12 @@ def as_vec2(x: tuple[float, float] | list[float] | np.ndarray) -> Vector2:
     return a
 
 
-def norm2(v: Vector2) -> float:
-    """Euclidean norm of a 2D vector."""
-    return float(np.hypot(v[0], v[1]))
-
-
-def dot2(a: Vector2, b: Vector2) -> float:
-    """Dot product for 2D vectors."""
-    return float(a[0] * b[0] + a[1] * b[1])
-
-
-def almost_equal(a: float, b: float, eps: float = 1e-12) -> bool:
-    return abs(a - b) <= eps
-
-
 @dataclass(frozen=True)
 class Entity2D:
     """Base class for 2D point entities with an identifier and initial position."""
 
     id: str
-    p0: Vector2  # initial position at t = 0
+    p0: np.ndarray  # initial position at t = 0
 
     def __post_init__(self):
         object.__setattr__(self, "p0", as_vec2(self.p0))
@@ -44,15 +28,15 @@ class Entity2D:
 class Target(Entity2D):
     """Target moving linearly with constant velocity."""
 
-    v: Vector2  # velocity (vx, vy)
+    v: np.ndarray  # velocity (vx, vy)
 
     def __post_init__(self):
         super().__post_init__()
         object.__setattr__(self, "v", as_vec2(self.v))
 
-    def position(self, t: float) -> Vector2:
+    def position(self, t: float) -> np.ndarray:
         """Position of the target at time t."""
-        return self.p0 + self.v * float(t)
+        return self.p0 + self.v * t
 
 
 @dataclass(frozen=True)
@@ -94,7 +78,7 @@ class InterceptSolution:
     """Solution of the intercept equation for a UAV and a moving target."""
 
     t_hit: float  # absolute time of interception (>= t0)
-    p_hit: Vector2  # position of interception
+    p_hit: np.ndarray  # position of interception
     leg_time: float  # travel time from (t0, u0) to hit (equals t_hit - t0)
     leg_distance: float  # distance traveled (equals speed * leg_time)
 
@@ -124,10 +108,10 @@ def _solve_quadratic_stable(
 
 
 def intercept_time(
-    u0: Vector2,
+    u0: np.ndarray,
     t0: float,
-    p0: Vector2,
-    v: Vector2,
+    p0: np.ndarray,
+    v: np.ndarray,
     speed: float,
     eps: float = 1e-9,
 ) -> Optional[InterceptSolution]:
@@ -139,16 +123,16 @@ def intercept_time(
 
     Parameters
     ----------
-    u0 : Vector2
+    u0 : np.ndarray
         UAV position at time t0.
     t0 : float
         Current time when UAV becomes free.
-    p0 : Vector2
+    p0 : np.ndarray
         Target's initial position at time 0.
-    v : Vector2
+    v : np.ndarray
         Target's constant velocity.
     speed : float
-        UAV max speed (nonnegative).
+        UAV max speed (positive).
     eps : float
         Small tolerance for comparisons.
 
@@ -167,19 +151,19 @@ def intercept_time(
 
     # Immediate hit if already co-located at t0.
     # Check whether the target is at u0 at t0: p0 + v*t0 == u0
-    if norm2((p0 + v * t0) - u0) <= eps:
+    if np.linalg.norm((p0 + v * t0) - u0) < eps:
         p_hit = p0 + v * t0
         return InterceptSolution(t_hit=t0, p_hit=p_hit, leg_time=0.0, leg_distance=0.0)
 
     # Build quadratic A t^2 + B t + C = 0 following:
-    # ||\Delta + v t||^2 = s^2 (t - t0)^2
-    # where \Delta = p0 - u0
+    # ||Delta + v t||^2 = s^2 (t - t0)^2
+    # where Delta = p0 - u0
     Delta = p0 - u0
-    v2 = dot2(v, v)
+    v2 = np.dot(v, v)
     s2 = speed * speed
     A = v2 - s2
-    B = 2.0 * (dot2(Delta, v) + s2 * t0)
-    C = dot2(Delta, Delta) - s2 * t0 * t0
+    B = 2.0 * (np.dot(Delta, v) + s2 * t0)
+    C = np.dot(Delta, Delta) - s2 * t0 * t0
 
     # Handle A ~ 0: linear equation B t + C = 0
     if abs(A) <= 1e-14:
@@ -231,7 +215,7 @@ def intercept_time(
 
 
 def intercept_uav_target(
-    uav: UAV, uav_pos_at_t0: Vector2, t0: float, target: Target, eps: float = 1e-9
+    uav: UAV, uav_pos_at_t0: np.ndarray, t0: float, target: Target, eps: float = 1e-9
 ) -> Optional[InterceptSolution]:
     """
     Wrapper that uses UAV's speed and a Target object.
@@ -249,8 +233,8 @@ if __name__ == "__main__":
     tgt = Target(id="t1", p0=np.array([100.0, 0.0]), v=np.array([0.0, 0.0]))
     sol = intercept_uav_target(u, u.p0, 0.0, tgt)
     assert sol is not None
-    assert almost_equal(sol.t_hit, 10.0)
-    assert almost_equal(sol.leg_distance, 100.0)
+    assert np.isclose(sol.t_hit, 10.0)
+    assert np.isclose(sol.leg_distance, 100.0)
 
     # 2) Target moving towards UAV
     tgt2 = Target(id="t2", p0=np.array([100.0, 0.0]), v=np.array([-5.0, 0.0]))
@@ -270,8 +254,8 @@ if __name__ == "__main__":
     sol4 = intercept_uav_target(u, u.p0, 0.0, tgt4)
     assert (
         sol4 is not None
-        and almost_equal(sol4.t_hit, 0.0)
-        and almost_equal(sol4.leg_distance, 0.0)
+        and np.isclose(sol4.t_hit, 0.0)
+        and np.isclose(sol4.leg_distance, 0.0)
     )
 
     print("model.py smoke tests passed.")
